@@ -38,14 +38,14 @@ class QueryProxy(object):
         return getattr(self.query, k)
 
     def __iter__(self):
-        return iter(self.perfume())
+        return iter(self.perform())
 
     def invoke_method(self, name, *args, **kwargs):
         method = getattr(self.query, name)
         self.query = method(*args, **kwargs)
         return self
 
-    def perfume(self):
+    def perform(self):
         q = self.query
         for options in self.lazy_options:
             q = options(q)

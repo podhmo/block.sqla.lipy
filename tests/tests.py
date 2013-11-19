@@ -102,28 +102,28 @@ class ApplicableTests(unittest.TestCase):
     def test_0(self):
         data = {"query": self.User,
                 "filter": ["=", self.User.id, 1]}
-        result = self._callFUT(data).perfume()
+        result = self._callFUT(data).perform()
         expected = self.Session.query(self.User).filter(self.User.id==1)
         self.assertQuery(result, expected)
 
     def test_1(self):
         data = {"query": self.User,
                 "filter": ["!=", self.User.id, 1]}
-        result = self._callFUT(data).perfume()
+        result = self._callFUT(data).perform()
         expected = self.Session.query(self.User).filter(self.User.id!=1)
         self.assertQuery(result, expected)
 
     def test_2(self):
         data = {"query": self.User,
                 "filter": ["in", self.User.id, ["quote", 1, 2, 3]]}
-        result = self._callFUT(data).perfume()
+        result = self._callFUT(data).perform()
         expected = self.Session.query(self.User).filter(self.User.id.in_([1, 2, 3]))
         self.assertQuery(result, expected)
 
     def test_3(self):
         data = {"query": self.User,
                 "filter": ["not", ["in", self.User.id, ["quote", 1, 2, 3]]]}
-        result = self._callFUT(data).perfume()
+        result = self._callFUT(data).perform()
         expected = self.Session.query(self.User).filter(sa.not_(self.User.id.in_([1, 2, 3])))
         self.assertQuery(result, expected)
 
@@ -132,7 +132,7 @@ class ApplicableTests(unittest.TestCase):
                 "filter": ["and",  ["or", ["=", self.User.name, "foo"], ["=", self.User.name, "bar"]], 
                             ["<", self.User.id, 10]]}
 
-        result = self._callFUT(data).perfume()
+        result = self._callFUT(data).perform()
         q =  self.Session.query(self.User)
         expected = q.filter(sa.and_(sa.or_(self.User.name=="foo", self.User.name=="bar"), self.User.id<10))
         self.assertQuery(result, expected)
@@ -142,7 +142,7 @@ class ApplicableTests(unittest.TestCase):
                           "filter": ["=", self.User.id, 1]},
                 "filter": ["like", self.User.name, "%foo%"]
         }
-        result = self._callFUT(data).perfume()
+        result = self._callFUT(data).perform()
         q = self.Session.query(self.User)
         expected = q.filter(self.User.id==1).filter(self.User.name.like("%foo%"))
         self.assertQuery(result, expected)
@@ -153,7 +153,7 @@ class ApplicableTests(unittest.TestCase):
                 "order_by": ["desc", self.User.id], 
                 "limit": ["quote", 10]
         }
-        result = self._callFUT(data).perfume()
+        result = self._callFUT(data).perform()
         q = self.Session.query(self.User).filter(self.User.id==1)
         expected = q.order_by(sa.desc(self.User.id)).limit(10)
         self.assertQuery(result, expected)
@@ -164,7 +164,7 @@ class ApplicableTests(unittest.TestCase):
                 "order_by": ["desc", self.User.id], 
                 "limit": 10
         }
-        result = self._callFUT(data).perfume()
+        result = self._callFUT(data).perform()
         q = self.Session.query(self.User).filter(self.User.id==1)
         expected = q.order_by(sa.desc(self.User.id)).limit(10)
         self.assertQuery(result, expected)
@@ -174,7 +174,7 @@ class ApplicableTests(unittest.TestCase):
                           "filter": ["=", self.Group.id, 1]},
                 "filter": ["=", self.User.group_id, self.Group.id]
         }
-        result = self._callFUT(data).perfume()
+        result = self._callFUT(data).perform()
         q = self.Session.query(self.User, self.Group)
         expected = q.filter(self.Group.id==1).filter(self.User.group_id==self.Group.id)
         self.assertQuery(result, expected)
@@ -184,7 +184,7 @@ class ApplicableTests(unittest.TestCase):
                 "filter": ["=", self.Group.id, 1], 
                 "join": self.User
         }
-        result = self._callFUT(data).perfume()
+        result = self._callFUT(data).perform()
         q = self.Session.query(self.Group, self.User)
         expected = q.filter(self.Group.id==1).join(self.User)
         self.assertQuery(result, expected)
@@ -194,7 +194,7 @@ class ApplicableTests(unittest.TestCase):
                 "filter": ["=", self.Group.id, 1],
                 "join": ["quote", self.User, ["=", self.User.group_id, self.Group.id]]
         }
-        result = self._callFUT(data).perfume()
+        result = self._callFUT(data).perform()
         q = self.Session.query(self.Group, self.User)
         expected = q.filter(self.Group.id==1).join(self.User, self.User.group_id==self.Group.id)
         self.assertQuery(result, expected)
@@ -207,7 +207,7 @@ class ApplicableTests(unittest.TestCase):
             {"order_by": ["desc", self.User.name]}, 
             {"limit": 10}
         ]}
-        result = self._callFUT(data).perfume()
+        result = self._callFUT(data).perform()
         q = self.Session.query(self.User)
         q = q.filter(self.Group.name.like("%foo%"))
         q = q.filter(self.User.group_id==self.Group.id)

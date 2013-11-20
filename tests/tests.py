@@ -65,8 +65,7 @@ class DefailtCompositeHandlerTests(unittest.TestCase):
         return self._getTarget()(*args, **kwargs)
 
     def setUp(self):
-        engine = sa.create_engine('sqlite://')
-        Base = declarative_base(bind=engine)
+        Base = declarative_base()
         class User(Base):
             __tablename__ = "users"
             id = sa.Column(sa.Integer(), primary_key=True, nullable=False)
@@ -319,6 +318,19 @@ class ApplicableTests(unittest.TestCase):
         expected2 = expected_q.filter(self.User.id==2).limit(10)
         self.assertQuery(result1, expected1)
         self.assertQuery(result2, expected2)
+
+    def test_17__full(self):
+        data = {'join': self.User, 
+                'filter': ['or', ['like', self.Group.name, '%foo%'], ['like', self.Group.name, '%bar']], 
+                'query': [self.Group, self.User],
+                'limit': 10,
+                'order_by': ['desc', self.User.id]}
+        result = self._callFUT(data).perform()
+
+        q = self.Session.query(self.Group, self.User)
+        q = q.filter(sa.or_(self.Group.name.like("%foo%"), self.Group.name.like("%bar")))
+        expected = q.join(self.User).order_by(sa.desc(self.User.id)).limit(10)
+        self.assertQuery(result, expected)
 
 if __name__ == '__main__':
     unittest.main()

@@ -2,6 +2,26 @@
 import sqlalchemy as sa
 import operator as op
 
+default_query_methods = ["filter","order_by", "join", "options"]
+default_lazy_options = ["limit", "offset"]
+default_args_method_table = {
+    "<": op.lt,
+    "<=": op.le,
+    ">": op.gt,
+    ">=": op.ge,
+    "=":  op.eq,
+    "!=": op.ne,
+    "and": op.and_,
+    "or": op.or_,
+    "in": lambda x, y: x.in_(y),
+    "quote": lambda *args: args,
+    "not": sa.not_,
+    "like": lambda x, *args, **kwargs: getattr(x, "like")(*args, **kwargs),
+    "notlike": lambda x, *args, **kwargs: sa.not_(getattr(x, "like")(*args, **kwargs)),
+    "desc": sa.desc,
+    "asc": sa.asc
+}
+
 class InvalidElement(Exception):
     pass
 
@@ -79,26 +99,6 @@ def cascade(xs):
 
 
 default_macros = {"cascade": cascade}
-def quote(*args):
-    return args
-
-default_args_method_table = {
-    "<": op.lt,
-    "<=": op.le,
-    ">": op.gt,
-    ">=": op.ge,
-    "=":  op.eq,
-    "==":  op.eq,
-    "!=": op.ne,
-    "and": op.and_,
-    "or": op.or_,
-    "in": lambda x, y: x.in_(y),
-    "quote": quote,
-    "not": sa.not_,
-    "like": lambda x, *args, **kwargs: getattr(x, "like")(*args, **kwargs),
-    "desc": sa.desc,
-    "asc": sa.asc
-}
 
 def list_from_one_or_many(e):
     if hasattr(e, "__iter__"):
@@ -145,8 +145,8 @@ class Parser(object):
     def __init__(self, query_factory,
                  handler, 
                  macros=default_macros,
-                 query_methods=["filter","order_by", "join", "options"], 
-                 lazy_query_methods=["limit", "offset"], 
+                 query_methods=default_query_methods,
+                 lazy_query_methods=default_lazy_options,
                  args_method_table=default_args_method_table
              ):
         self.handler = handler
@@ -215,7 +215,7 @@ def create_handler(base):
 def create_parser(base, query_factory,
                   handler=None,
                   macros=default_macros,
-                  query_methods=["filter","order_by", "join", "options"],
+                  query_methods=default_query_methods,
                   lazy_query_methods=["limit", "offset"],
                   args_method_table=default_args_method_table):
     handler = handler or create_handler(base)

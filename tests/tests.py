@@ -244,5 +244,33 @@ class ApplicableTests(unittest.TestCase):
         expected = q.order_by(sa.desc(self.User.name)).limit(10)
         self.assertQuery(result, expected)
 
+    def test_14__clean_order_by(self):
+        data = {"order_by": ["desc", self.User.id],
+                "query": self.User}
+        result = self._callFUT(data).order_by(None).perform()
+        expected = self.Session.query(self.User)
+        self.assertQuery(result, expected)
+
+    def test_15__filter_after_limit(self):
+        data = {"limit": 10,
+                "query": self.User}
+        result = self._callFUT(data).filter(self.User.id==1).perform()
+        expected = self.Session.query(self.User).filter(self.User.id==1).limit(10)
+        self.assertQuery(result, expected)
+
+    def test_16__children_from_same_parent__are_separated(self):
+        data = {"limit": 10,
+                "filter": ["=", self.User.name, "foo"], 
+                "query": self.User}
+        q = self._callFUT(data)
+        result1 = q.filter(self.User.id==1).perform()
+        result2 = q.filter(self.User.id==2).perform()
+        expected_q = self.Session.query(self.User).filter(self.User.name=="foo")
+        expected1 = expected_q.filter(self.User.id==1).limit(10)
+        expected2 = expected_q.filter(self.User.id==2).limit(10)
+        self.assertQuery(result1, expected1)
+        self.assertQuery(result2, expected2)
+
+
 if __name__ == '__main__':
     unittest.main()

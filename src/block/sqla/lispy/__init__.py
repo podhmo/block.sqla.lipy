@@ -30,20 +30,22 @@ class MapperHandler(object):
 
 
 class QueryProxy(object):
-    def __init__(self, query):
+    def __init__(self, query, lazy_options=None):
         self.query = query
-        self.lazy_options = []
+        self.lazy_options = lazy_options or []
 
     def __getattr__(self, k):
-        return getattr(self.query, k)
+        attr = getattr(self.query, k)
+        if callable(attr):
+            def wrapped(*args, **kwargs):
+                return self.__class__(attr(*args, **kwargs), lazy_options=self.lazy_options[:])
+            wrapped.__name__ = attr.__name__
+            return wrapped
+        else:
+            return attr
 
     def __iter__(self):
         return iter(self.perform())
-
-    def invoke_method(self, name, *args, **kwargs):
-        method = getattr(self.query, name)
-        self.query = method(*args, **kwargs)
-        return self
 
     def perform(self):
         q = self.query
@@ -150,7 +152,8 @@ class Parser(object):
             query = self.parse(data["query"], query=query)
             for m in self.query_methods:
                 if m in data:
-                    query = query.invoke_method(m, self.parse_args(data[m], query=query))
+                    method = getattr(query, m)
+                    query = method(self.parse_args(data[m], query=query))
             for m in self.lazy_query_methods:
                 if m in data:
                     args = self.parse_args(data[m], query=query)

@@ -10,12 +10,14 @@ class MapperHandler(object):
         self.base = base
 
     def match(self, e):
-        return e.startswith(":")
+        return hasattr(e, "startswith") and e.startswith(":")
 
     def handle(self, e):
         try:
             name_list = e[1:]
-            name, *attrs = name_list.split(".")
+            nodes = name_list.split(".")
+            name = nodes[0]
+            attrs = nodes[1:]
             obj = self.base._decl_class_registry[name]
             for attr in attrs:
                 try:
@@ -36,7 +38,11 @@ class QueryProxy(object):
         attr = getattr(self.query, k)
         if callable(attr):
             def wrapped(*args, **kwargs):
-                return self.__class__(attr(*args, **kwargs), lazy_options=self.lazy_options[:])
+                ## fixme:
+                if isinstance(args[0], (list, tuple)):
+                    args = args[0]
+                new_query = attr(*args, **kwargs)
+                return self.__class__(new_query, lazy_options=self.lazy_options[:])
             wrapped.__name__ = attr.__name__
             return wrapped
         else:
@@ -70,6 +76,9 @@ def cascade(xs):
 
 
 default_macros = {"cascade": cascade}
+def quote(*args):
+    return args
+
 default_args_method_table = {
     "<": op.lt,
     "<=": op.le,
@@ -81,7 +90,7 @@ default_args_method_table = {
     "and": op.and_,
     "or": op.or_,
     "in": lambda x, y: x.in_(y),
-    "quote": lambda *args: args,
+    "quote": quote,
     "not": sa.not_,
     "like": lambda x, *args, **kwargs: getattr(x, "like")(*args, **kwargs),
     "desc": sa.desc,
@@ -128,9 +137,6 @@ class IdentityHandler(object):
         return True
     def handle(self, e):
         return e
-
-def default_handler(base):
-    return CompositeHandler([MapperHandler(base), IdentityHandler()])
 
 class Parser(object):
     def __init__(self, query_factory,
@@ -186,10 +192,11 @@ class Parser(object):
             return query
         else:
             assert query is None
+            handle = self.handler.handle
             if isinstance(data, (list, tuple)):
-                return QueryProxy(self.query_factory(*data))
+                return QueryProxy(self.query_factory(*(handle(e) for e in data)))
             else:
-                return QueryProxy(self.query_factory(data))
+                return QueryProxy(self.query_factory(handle(data)))
 
     def parse_args(self, data, query=None):
         if isinstance(data, (tuple, list)):
@@ -198,6 +205,23 @@ class Parser(object):
             return op(*args)
         else:
             return self.handler.handle(data)
+
+def create_handler(base):
+    return CompositeHandler([MapperHandler(base), IdentityHandler()])
+
+def create_parser(base, query_factory,
+                  handler=None,
+                  macros=default_macros,
+                  query_methods=["filter","order_by", "join", "options"],
+                  lazy_query_methods=["limit", "offset"],
+                  args_method_table=default_args_method_table):
+    handler = handler or create_handler(base)
+    return Parser(query_factory,
+                  handler,
+                  macros=macros,
+                  query_methods=query_methods,
+                  lazy_query_methods=lazy_query_methods,
+                  args_method_table=args_method_table)
 
 def includeme(config):
     from zope.interface import Interface, provider
@@ -208,24 +232,10 @@ def includeme(config):
         def __call__(data):
             pass
 
-    @provider(ILispyParserFactory)
-    def default_parser_factory(base, query_factory):
-        handler = default_handler(base)
-        macros=default_macros,
-        query_methods=["filter","order_by", "join", "options"], 
-        lazy_query_methods=["limit", "offset"], 
-        args_method_table=default_args_method_table
-        return Parser(query_factory,
-                      handler,
-                      macros=macros,
-                      query_methods=query_methods,
-                      lazy_query_methods=lazy_query_methods,
-                      args_method_table=args_method_table)
-
     def set_lispy_parser(config, *args, **kwargs):
         factory = config.registry.getUtility(ILispyParserFactory)
         parser = factory(*args, **kwargs)
-        config.registry.registerUtility(parser, ILispyParser)
+        config.registry.registerUtility(provider(ILispyParser)(parser), ILispyParser)
 
-    config.registry.registerUtility(default_parser_factory, ILispyParserFactory)
+    config.registry.registerUtility(provider(ILispyParserFactory)(create_handler), ILispyParserFactory)
     config.add_directive("set_lispy_parser", set_lispy_parser)

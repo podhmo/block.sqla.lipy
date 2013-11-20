@@ -58,8 +58,8 @@ class MapperHandlerTests(unittest.TestCase):
 
 class DefailtCompositeHandlerTests(unittest.TestCase):
     def _getTarget(self):
-        from block.sqla.lispy import default_handler
-        return default_handler
+        from block.sqla.lispy import create_handler
+        return create_handler
 
     def _makeOne(self, *args, **kwargs):
         return self._getTarget()(*args, **kwargs)
@@ -90,9 +90,6 @@ class DefailtCompositeHandlerTests(unittest.TestCase):
         from block.sqla.lispy import InvalidElement
         with self.assertRaises(InvalidElement):
             target.handle(":Undefined")
-
-
-
 
 class CascadeTests(unittest.TestCase):
     def _callFUT(self, data):
@@ -322,7 +319,6 @@ class ApplicableTests(unittest.TestCase):
         expected2 = expected_q.filter(self.User.id==2).limit(10)
         self.assertQuery(result1, expected1)
         self.assertQuery(result2, expected2)
-
 
 if __name__ == '__main__':
     unittest.main()

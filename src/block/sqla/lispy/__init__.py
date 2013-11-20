@@ -199,3 +199,33 @@ class Parser(object):
         else:
             return self.handler.handle(data)
 
+def includeme(config):
+    from zope.interface import Interface, provider
+    class ILispyParserFactory(Interface):
+        def __call__(*args, **kwargs):
+            pass
+    class ILispyParser(Interface):
+        def __call__(data):
+            pass
+
+    @provider(ILispyParserFactory)
+    def default_parser_factory(base, query_factory):
+        handler = default_handler(base)
+        macros=default_macros,
+        query_methods=["filter","order_by", "join", "options"], 
+        lazy_query_methods=["limit", "offset"], 
+        args_method_table=default_args_method_table
+        return Parser(query_factory,
+                      handler,
+                      macros=macros,
+                      query_methods=query_methods,
+                      lazy_query_methods=lazy_query_methods,
+                      args_method_table=args_method_table)
+
+    def set_lispy_parser(config, *args, **kwargs):
+        factory = config.registry.getUtility(ILispyParserFactory)
+        parser = factory(*args, **kwargs)
+        config.registry.registerUtility(parser, ILispyParser)
+
+    config.registry.registerUtility(default_parser_factory, ILispyParserFactory)
+    config.add_directive("set_lispy_parser", set_lispy_parser)

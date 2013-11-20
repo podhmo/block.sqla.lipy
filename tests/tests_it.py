@@ -65,15 +65,17 @@ class IntegrationTests(unittest.TestCase):
         target = self._makeOne(self.Base, self.Session.query)
         data = {"limit": 10,
                 "@cascade": [
-                    {"query": [":Group", ":User"]},
+                    {"query": [":User.id", ":Group.name", ":User.name"]},
                     {"filter": ["like", ":Group.name", "%Group%"]},
-                    {"join": ["quote", ":User", ["==", ":User.group_id", ":Group.id"]]},
+                    {"filter": ["<=", ":Group.id", 1]}, 
+                    {"join": ["quote", ":Group", ["==", ":User.group_id", ":Group.id"]]},
                     {"order_by": ["desc", ":User.name"]},
                 ]}
         result = target(data)
 
-        q = self.Session.query(self.Group, self.User)
-        q = q.filter(self.Group.name.like("%Group%")).join(self.User, self.User.group_id==self.Group.id)
+        q = self.Session.query(self.User.id, self.Group.name, self.User.name)
+        q = q.filter(self.Group.name.like("%Group%")).filter(self.Group.id <= 1)
+        q = q.join(self.Group, self.User.group_id==self.Group.id)
         expected = q.order_by(sa.desc(self.User.name)).limit(10)
 
 

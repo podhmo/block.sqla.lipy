@@ -5,6 +5,9 @@ from sqlalchemy.ext.declarative import declarative_base
 import unittest
 
 class IntegrationTests(unittest.TestCase):
+    def tearDown(self):
+        self.Base.metadata.drop_all()
+
     def setUp(self):
         engine = sa.create_engine("sqlite://")
         Base = declarative_base(bind=engine)
@@ -26,6 +29,17 @@ class IntegrationTests(unittest.TestCase):
         self.Session = orm.sessionmaker(bind=engine)()
         self.Base.metadata.create_all()
 
+    def setupFixture(self):
+        s = self.Session()
+        group1 = self.Group(name="Group1")
+        group2 = self.Group(name="Group2")
+        s.add(group1)
+        s.add(group2)
+        s.add(self.User(name="foo", group=group1))
+        s.add(self.User(name="boo", group=group1))
+        s.add(self.User(name="bar", group=group2))
+        s.commit()
+
     def _getTarget(self):
         from block.sqla.lispy import create_parser
         return create_parser
@@ -36,30 +50,35 @@ class IntegrationTests(unittest.TestCase):
     def test_it0(self):
         target = self._makeOne(self.Base, self.Session.query)
         data = {"query": {"query": [":User", ":Group"],
-                          "filter": ["=", ":Group.id", 1]},
+                          "filter": ["=", ":Group.name", "Group1"]},
                 "filter": ["=", ":User.group_id", ":Group.id"]
         }
-        result = target(data).perform()
+        result = target(data)
+
         q = self.Session.query(self.User, self.Group)
-        expected = q.filter(self.Group.id==1).filter(self.User.group_id==self.Group.id)
+        expected = q.filter(self.Group.name=="Group1").filter(self.User.group_id==self.Group.id)
+
         self.assertEqual(str(result), str(expected))
+        self.assertEqual(list(result), list(expected))
 
     def test_it(self):
-        q = self.Session.query(self.Group, self.User)
-        q = q.filter(self.Group.id==1).join(self.User, self.User.group_id==self.Group.id)
-        expected = q.order_by(sa.desc(self.User.name)).limit(10)
-
         target = self._makeOne(self.Base, self.Session.query)
         data = {"limit": 10,
                 "@cascade": [
                     {"query": [":Group", ":User"]},
-                    {"filter": ["=", ":Group.id", 1]},
+                    {"filter": ["like", ":Group.name", "%Group%"]},
                     {"join": ["quote", ":User", ["==", ":User.group_id", ":Group.id"]]},
                     {"order_by": ["desc", ":User.name"]},
                 ]}
-        result = target(data).perform()
-        self.assertEqual(str(result), str(expected))
+        result = target(data)
 
+        q = self.Session.query(self.Group, self.User)
+        q = q.filter(self.Group.name.like("%Group%")).join(self.User, self.User.group_id==self.Group.id)
+        expected = q.order_by(sa.desc(self.User.name)).limit(10)
+
+
+        self.assertEqual(str(result), str(expected))
+        self.assertEqual(list(result), list(expected))
 
 if __name__ == '__main__':
     unittest.main()

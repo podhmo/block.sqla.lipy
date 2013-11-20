@@ -51,6 +51,9 @@ class QueryProxy(object):
     def __iter__(self):
         return iter(self.perform())
 
+    def __str__(self):
+        return str(self.perform())
+
     def perform(self):
         q = self.query
         for options in self.lazy_options:

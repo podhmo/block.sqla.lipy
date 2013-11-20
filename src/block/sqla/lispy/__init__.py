@@ -5,17 +5,8 @@ import operator as op
 class InvalidElement(Exception):
     pass
 
-# class Env(object):
-#     def __init__(self, query_factory):
-#         self.query_factory = query_factory
-
-#     def eval(self, e):
-#         self.e = e
-
-
 class MapperHandler(object):
-    def __init__(self, env, base):
-        self.env = env
+    def __init__(self, base):
         self.base = base
 
     def match(self, e):
@@ -23,8 +14,15 @@ class MapperHandler(object):
 
     def handle(self, e):
         try:
-            name = e[1:]
-            return self.base._decl_class_registry[name]
+            name_list = e[1:]
+            name, *attrs = name_list.split(".")
+            obj = self.base._decl_class_registry[name]
+            for attr in attrs:
+                try:
+                    obj = getattr(obj, attr)
+                except AttributeError:
+                    raise InvalidElement("attribute {} is not found. .. Mapper.attribute".format(attr))
+            return obj
         except KeyError:
             raise InvalidElement("{} is not found. .. Mapper".format(e))
 
@@ -112,14 +110,37 @@ def insert_bottom(query_dict, q):
         else:
             insert_bottom(sub, q)
 
+class CompositeHandler(object):
+    def __init__(self, handlers=None):
+        self.handlers = handlers or []
+
+    def match(self, e):
+        return True
+
+    def handle(self, e):
+        for handler in self.handlers:
+            if handler.match(e):
+                return handler.handle(e)
+        raise InvalidElement("handler not found: {}".format(e))
+
+class IdentityHandler(object):
+    def match(self, e):
+        return True
+    def handle(self, e):
+        return e
+
+def default_handler(base):
+    return CompositeHandler([MapperHandler(base), IdentityHandler()])
 
 class Parser(object):
     def __init__(self, query_factory,
+                 handler, 
                  macros=default_macros,
                  query_methods=["filter","order_by", "join", "options"], 
                  lazy_query_methods=["limit", "offset"], 
                  args_method_table=default_args_method_table
              ):
+        self.handler = handler
         self.query_factory = query_factory
         self.macros = macros
         self.query_methods = query_methods
@@ -176,4 +197,5 @@ class Parser(object):
             args = [self.parse_args(e, query=query) for e in data[1:]]
             return op(*args)
         else:
-            return data
+            return self.handler.handle(data)
+

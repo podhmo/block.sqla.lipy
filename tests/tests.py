@@ -25,23 +25,73 @@ class MapperHandlerTests(unittest.TestCase):
         return self._getTarget()(*args, **kwargs)
 
     def test_match(self):
-        target = self._makeOne(None,self.Base)
+        target = self._makeOne(self.Base)
         self.assertTrue(target.match(":Gruop"))
 
     def test_match__fail(self):
-        target = self._makeOne(None,self.Base)
+        target = self._makeOne(self.Base)
         self.assertFalse(target.match("<"))
 
     def test_handle(self):
-        target = self._makeOne(None,self.Base)
+        target = self._makeOne(self.Base)
         result = target.handle(":User")
         self.assertEqual(result, self.User)
 
     def test_handle_fail(self):
         from block.sqla.lispy import InvalidElement
-        target = self._makeOne(None,self.Base)
+        target = self._makeOne(self.Base)
         with self.assertRaises(InvalidElement):
             target.handle(":Grou")
+
+    def test_handle_attribute(self):
+        target = self._makeOne(self.Base)
+        result = target.handle(":User.id")
+        self.assertEqual(result, self.User.id)
+
+
+    def test_handle_attribute__fail(self):
+        from block.sqla.lispy import InvalidElement
+        target = self._makeOne(self.Base)
+        with self.assertRaises(InvalidElement):
+            target.handle(":User.id__")
+
+
+class DefailtCompositeHandlerTests(unittest.TestCase):
+    def _getTarget(self):
+        from block.sqla.lispy import default_handler
+        return default_handler
+
+    def _makeOne(self, *args, **kwargs):
+        return self._getTarget()(*args, **kwargs)
+
+    def setUp(self):
+        engine = sa.create_engine('sqlite://')
+        Base = declarative_base(bind=engine)
+        class User(Base):
+            __tablename__ = "users"
+            id = sa.Column(sa.Integer(), primary_key=True, nullable=False)
+            name = sa.Column(sa.String(255), unique=True, nullable=False)
+
+        self.Base = Base
+        self.User = User
+
+    def test_not_matched(self):
+        target = self._makeOne(self.Base)
+        self.assertEqual(target.handle("*dummy*"), "*dummy*")
+
+    def test_it(self):
+        target = self._makeOne(self.Base)
+        self.assertEqual(target.handle(":User"), self.User)
+        self.assertEqual(target.handle(":User.id"), self.User.id)
+
+
+    def test_it_fail(self):
+        target = self._makeOne(self.Base)
+        from block.sqla.lispy import InvalidElement
+        with self.assertRaises(InvalidElement):
+            target.handle(":Undefined")
+
+
 
 
 class CascadeTests(unittest.TestCase):
@@ -94,7 +144,9 @@ class ApplicableTests(unittest.TestCase):
 
     def _callFUT(self, *args, **kwargs):
         from block.sqla.lispy import Parser
-        return Parser(self.Session.query)(*args, **kwargs)
+        from block.sqla.lispy import IdentityHandler
+        handler = IdentityHandler()
+        return Parser(self.Session.query, handler)(*args, **kwargs)
 
     def assertQuery(self, q1, q2):
         self.assertEqual(str(q1), str(q2))

@@ -214,6 +214,35 @@ class ApplicableTests(unittest.TestCase):
         expected = q.order_by(sa.desc(self.User.name)).limit(10)
         self.assertQuery(result, expected)
 
+    def test_12__complex_cascade2(self):
+        data = {"limit": 10, 
+                "@cascade": [
+                    {"query": self.User}, 
+                    {"filter": ["like", self.Group.name, "%foo%"]}, 
+                    {"filter": ["=", self.User.group_id, self.Group.id]}, 
+                    {"order_by": ["desc", self.User.name]}, 
+                ]}
+        result = self._callFUT(data).perform()
+        q = self.Session.query(self.User)
+        q = q.filter(self.Group.name.like("%foo%"))
+        q = q.filter(self.User.group_id==self.Group.id)
+        expected = q.order_by(sa.desc(self.User.name)).limit(10)
+        self.assertQuery(result, expected)
+
+    def test_13__complex_cascade3(self):
+        data = {"limit": 10,
+                "query": self.User,
+                "@cascade": [
+                    {"query": self.Group}, 
+                    {"filter": ["=", self.Group.id, 1]}, 
+                    {"join": ["quote", self.User, ["=", self.User.group_id, self.Group.id]]},
+                    {"order_by": ["desc", self.User.name]},
+                ]}
+        result = self._callFUT(data).perform()
+        q = self.Session.query(self.Group, self.User)
+        q = q.filter(self.Group.id==1).join(self.User, self.User.group_id==self.Group.id)
+        expected = q.order_by(sa.desc(self.User.name)).limit(10)
+        self.assertQuery(result, expected)
 
 if __name__ == '__main__':
     unittest.main()

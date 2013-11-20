@@ -87,6 +87,30 @@ default_args_method_table = {
     "desc": sa.desc,
     "asc": sa.asc
 }
+
+def list_from_one_or_many(e):
+    if hasattr(e, "__iter__"):
+        return list(e)
+    else:
+        return [e]
+
+def merge_from_one_or_many(xs, ys):
+    xs = list_from_one_or_many(xs)
+    ys = list_from_one_or_many(ys)
+    xs.extend(ys)
+    return xs
+
+def insert_bottom(query_dict, q):
+    if not "query" in query_dict:
+        query_dict["query"] = q
+    else:
+        sub = query_dict["query"]
+        if not hasattr(sub, "keys"):
+            query_dict["query"] = merge_from_one_or_many(sub, q)
+        else:
+            insert_bottom(sub, q)
+
+
 class Parser(object):
     def __init__(self, query_factory,
                  macros=default_macros,
@@ -110,7 +134,13 @@ class Parser(object):
             for k in ks:
                 v = self.parse_macro(data[k])
                 if k.startswith("@"):
-                    data = self.macros[k[1:]](v)
+                    del data[k]
+                    converted = self.macros[k[1:]](v)
+                    if not "query" in data or not "query" in converted:
+                        data.update(converted)
+                    else:
+                        insert_bottom(converted, data.pop("query"))
+                        data.update(converted)
         elif isinstance(data, (tuple, list)):
             return [self.parse_macro(v) for v in data]
         return data
@@ -141,10 +171,6 @@ class Parser(object):
         if isinstance(data, (tuple, list)):
             op = self.args_method_table[data[0]]
             args = [self.parse_args(e, query=query) for e in data[1:]]
-            try:
-                return op(*args)
-            except Exception:
-                print(op, args)
-                raise
+            return op(*args)
         else:
             return data

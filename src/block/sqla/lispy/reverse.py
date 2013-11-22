@@ -9,7 +9,7 @@ from block.sqla.lispy import (
     default_lazy_options,
     default_args_method_table,
 )
-from collections import namedtuple
+from collections import namedtuple, defaultdict
 Env = namedtuple("Env", "handler query_methods action_factory")
 
 class InvalidQueryMethod(Exception):
@@ -34,7 +34,7 @@ class OnPlaceHolderActionFactory(object):
 
     def collect(self, collected, history):
         def callback(placeholder):
-            collected[placeholder.name] = ".".join(history)
+            collected[placeholder.name].append(".".join(str(e) for e in history))
         return callback
 
 class QueryTarget(object):
@@ -44,7 +44,7 @@ class QueryTarget(object):
 
     def __action__(self, context, callback=None):
         handle = self.env.handler.handle
-        return [handle(e, callback=callback) for e in self.args]
+        return [handle(e, context.get("history",[]), callback=callback) for e in self.args]
 
 class QueryMethod(object):
     def __init__(self, name, data, args=None):
@@ -72,13 +72,15 @@ class ArgsMethod(object):
         return self.query_method.update(self)
 
     def __action__(self, context, callback=None):
-        return self.env.handler.handle(self.args, callback=callback)
+        history = context.get("history",[])
+        result = self.env.handler.handle(self.args, history, callback=callback)
+        return result
 
 class ReverseHandler(object):
     def __init__(self, reverse_table):
         self.reverse_table = reverse_table
 
-    def handle(self, e, callback=None): #todo: refactoring
+    def handle(self, e, history, callback=None): #todo: refactoring
         if hasattr(e, "on_callback"):
             return e.on_callback(callback)
         try:
@@ -86,23 +88,36 @@ class ReverseHandler(object):
             if hasattr(m, "key") and hasattr(m, "class_"): #User.id
                 return ":{}".format(str(m))
             elif hasattr(m, "key") and hasattr(m, "value"): # User.id == 1 <- 
-                return self.handle(m.value, callback=callback)
+                return self.handle(m.value, history, callback=callback)
             elif hasattr(m, "name") and hasattr(m, "_annotations"): # -> User.id == 1
                 return ":{}.{}".format(m._annotations["parententity"].class_.__name__, m.name)
             elif hasattr(m, "operator") and hasattr(m, "clauses"): # x && y
                 op = self.reverse_table[m.operator]
-                args = [self.handle(x, callback=callback) for x in m.clauses]
+                args = []
+                for i, x in enumerate(m.clauses):
+                    history.append(i+1)
+                    args.append(self.handle(x, history, callback=callback))
+                    history.pop()
                 args.insert(0, op)
                 return args
             elif hasattr(m, "mapper"): #User
                 return ":{}".format(m.mapper.class_.__name__)
             elif hasattr(m, "left") and hasattr(m, "right"): #User.id == 1
-                return [self.reverse_table[m.operator],
-                        self.handle(m.left, callback=callback),
-                        self.handle(m.right, callback=callback)]
+                v = [self.reverse_table[m.operator]]
+                history.append(1)
+                v.append(self.handle(m.left, history, callback=callback))
+                history.pop()
+                history.append(2)
+                v.append(self.handle(m.right, history, callback=callback))
+                history.pop()
+                return v
             elif hasattr(m, "modifier") and hasattr(m, "element"): #sa.desc(User.id)
                 op = self.reverse_table[m.modifier]
-                return [op, self.handle(m.element, callback=callback)]
+                v = [op]
+                history.append(1)
+                v.append(self.handle(m.element, history, callback=callback))
+                history.pop()
+                return v
             else:
                 raise HandleActionNotFound(e)
         except NoInspectionAvailable:
@@ -132,7 +147,7 @@ class ReverseQuery(object):
         context = {
             "action": collect_data,
             "history": [],
-            "collected": {}
+            "collected": defaultdict(list)
         }
         callback = self.env.action_factory.collect(context["collected"], context["history"]) #hmm.
         return collect_data(self.data, context, callback=callback)
@@ -156,8 +171,8 @@ def collect_data(data, context, callback):
     history = context["history"]
     for k, v in data.items():
         history.append(k)
-        if hasattr(v, "__collect__"):
-            v.__collect__(context, callback=callback)
+        if hasattr(v, "__action__"):
+            v.__action__(context, callback=callback)
         elif hasattr(v, "keys"):
             collect_data(v, context, callback)
         history.pop()
@@ -194,4 +209,20 @@ def create_env(reverse_handler=None, query_methods=None, action_factory=None):
         handler=reverse_handler, 
         query_methods=query_methods, 
     )
+
+
+## hmm.
+def replace(access_dict, data, **kwargs):
+    for access_k, v in kwargs.items():
+        for name in access_dict[access_k]:
+            target = data
+            nodes = name.split(".")
+
+            for k in nodes[:-1]:
+                target = target[k]
+            if isinstance(target, (list, tuple)):
+                target[int(nodes[-1])] = v
+            else:
+                target[nodes[-1]] = v
+    return data
 

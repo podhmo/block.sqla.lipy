@@ -44,6 +44,20 @@ class NameTests(unittest.TestCase):
         expected = q.filter(self.User.id==1).filter(self.User.name==1).render()
         self.assertEqual(result, expected)
 
+    def test_collect(self):
+        q = self.query_factory(self.User)
+        target = q.filter(self.User.id==self._useOne("v")).filter(self.User.name==self._useOne("v"))
+        json_dict = target.collect()
+        result = target.render(v="v")
+
+        from block.sqla.lispy.reverse import replace
+        replace(json_dict, result, v="xxxx")
+
+        self.assertEqual(result,
+                         {'filter': ['=', ':User.name', 'xxxx'],
+                          'query': {'filter': ['=', ':User.id', 'xxxx'],
+                                    'query': [':User']}})
+
 
 if __name__ == '__main__':
     unittest.main()

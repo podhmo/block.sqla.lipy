@@ -4,11 +4,9 @@ import sqlalchemy.orm as orm
 from sqlalchemy.ext.declarative import declarative_base
 import unittest
 
-
 class MapperHandlerTests(unittest.TestCase):
     def setUp(self):
-        engine = sa.create_engine('sqlite://')
-        Base = declarative_base(bind=engine)
+        Base = declarative_base()
         class User(Base):
             __tablename__ = "users"
             id = sa.Column(sa.Integer(), primary_key=True, nullable=False)

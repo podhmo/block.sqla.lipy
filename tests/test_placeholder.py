@@ -30,12 +30,20 @@ class NameTests(unittest.TestCase):
         expected = q.filter(self.User.id==1).render()
         self.assertEqual(result, expected)
 
+    def test_it2(self):
+        q = self.query_factory(self.User)
+        target = q.limit(self._useOne("limit"))
+        result = target.render(limit=10)
+        expected = q.limit(10).render()
+        self.assertEqual(result, expected)
+
     def test_using_same_placeholder_name(self):
         q = self.query_factory(self.User)
         target = q.filter(self.User.id==self._useOne("v")).filter(self.User.name==self._useOne("v"))
         result = target.render(v=1)
         expected = q.filter(self.User.id==1).filter(self.User.name==1).render()
         self.assertEqual(result, expected)
+
 
 if __name__ == '__main__':
     unittest.main()

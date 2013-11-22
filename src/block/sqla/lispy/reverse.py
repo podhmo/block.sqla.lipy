@@ -7,10 +7,10 @@ from sqlalchemy.exc import NoInspectionAvailable
 from block.sqla.lispy import (
     default_query_methods,
     default_lazy_options,
-    default_args_method_table
+    default_args_method_table,
 )
 from collections import namedtuple
-Env = namedtuple("Env", "handler query_methods")
+Env = namedtuple("Env", "handler query_methods action_factory")
 
 class InvalidQueryMethod(Exception):
     pass
@@ -23,17 +23,28 @@ class Name(object):
     def __init__(self, name):
         self.name = name
 
-    def __emit__(self, render_vals):
-        return render_vals[self.name]
+    def on_callback(self, action):
+        return action(self)
+
+class OnPlaceHolderActionFactory(object):
+    def render(self, render_vals):
+        def callback(placeholder):
+            return render_vals[placeholder.name]
+        return callback
+
+    def collect(self, collected, history):
+        def callback(placeholder):
+            collected[placeholder.name] = ".".join(history)
+        return callback
 
 class QueryTarget(object):
     def __init__(self, env, args):
         self.env = env
         self.args = args
 
-    def __render__(self, render_vals=None):
+    def __action__(self, context, callback=None):
         handle = self.env.handler.handle
-        return [handle(e, render_vals=render_vals) for e in self.args]
+        return [handle(e, callback=callback) for e in self.args]
 
 class QueryMethod(object):
     def __init__(self, name, data, args=None):
@@ -60,39 +71,38 @@ class ArgsMethod(object):
         self.args = args #xxx
         return self.query_method.update(self)
 
-    def __render__(self, render_vals=None):
-        return self.env.handler.handle(self.args, render_vals=render_vals)
-
+    def __action__(self, context, callback=None):
+        return self.env.handler.handle(self.args, callback=callback)
 
 class ReverseHandler(object):
     def __init__(self, reverse_table):
         self.reverse_table = reverse_table
 
-    def handle(self, e, render_vals=None): #todo: refactoring
-        if hasattr(e, "__emit__"):
-            return e.__emit__(render_vals)
+    def handle(self, e, callback=None): #todo: refactoring
+        if hasattr(e, "on_callback"):
+            return e.on_callback(callback)
         try:
             m = inspect(e)
             if hasattr(m, "key") and hasattr(m, "class_"): #User.id
                 return ":{}".format(str(m))
             elif hasattr(m, "key") and hasattr(m, "value"): # User.id == 1 <- 
-                return self.handle(m.value, render_vals=render_vals)
+                return self.handle(m.value, callback=callback)
             elif hasattr(m, "name") and hasattr(m, "_annotations"): # -> User.id == 1
                 return ":{}.{}".format(m._annotations["parententity"].class_.__name__, m.name)
             elif hasattr(m, "operator") and hasattr(m, "clauses"): # x && y
                 op = self.reverse_table[m.operator]
-                args = [self.handle(x, render_vals=render_vals) for x in m.clauses]
+                args = [self.handle(x, callback=callback) for x in m.clauses]
                 args.insert(0, op)
                 return args
             elif hasattr(m, "mapper"): #User
                 return ":{}".format(m.mapper.class_.__name__)
             elif hasattr(m, "left") and hasattr(m, "right"): #User.id == 1
                 return [self.reverse_table[m.operator],
-                        self.handle(m.left, render_vals=render_vals),
-                        self.handle(m.right, render_vals=render_vals)]
+                        self.handle(m.left, callback=callback),
+                        self.handle(m.right, callback=callback)]
             elif hasattr(m, "modifier") and hasattr(m, "element"): #sa.desc(User.id)
                 op = self.reverse_table[m.modifier]
-                return [op, self.handle(m.element, render_vals=render_vals)]
+                return [op, self.handle(m.element, callback=callback)]
             else:
                 raise HandleActionNotFound(e)
         except NoInspectionAvailable:
@@ -113,20 +123,45 @@ class ReverseQuery(object):
             return ArgsMethod(self.env, QueryMethod(k, self.data.copy()))
         raise InvalidQueryMethod(k)
 
-    def __render__(self, **kwargs):
-        return render_data(self.data, kwargs)
-    render = __render__
+    def render(self, **kwargs):
+        callback = self.env.action_factory.render(kwargs)
+        context = {"action": render_data}
+        return render_data(self.data, context, callback=callback)
 
-def render_data(data, render_vals):
+    def collect(self):
+        context = {
+            "action": collect_data,
+            "history": [],
+            "collected": {}
+        }
+        callback = self.env.action_factory.collect(context["collected"], context["history"]) #hmm.
+        return collect_data(self.data, context, callback=callback)
+
+    def __action__(self, context, callback):
+        context["action"](self.data, context, callback=callback)
+
+
+def render_data(data, context, callback):
     D = {}
     for k, v in data.items():
-        if hasattr(v, "__render__"):
-            D[k] = v.__render__(render_vals=render_vals)
+        if hasattr(v, "__action__"):
+            D[k] = v.__action__(context, callback=callback)
         elif hasattr(v, "keys"):
-            D[k] = render_data(v, render_vals)
+            D[k] = render_data(v, context, callback)
         else:
             D[k] = v
     return D
+
+def collect_data(data, context, callback):
+    history = context["history"]
+    for k, v in data.items():
+        history.append(k)
+        if hasattr(v, "__collect__"):
+            v.__collect__(context, callback=callback)
+        elif hasattr(v, "keys"):
+            collect_data(v, context, callback)
+        history.pop()
+    return context["collected"]
 
 class ReverseTable(object):
     default = {
@@ -150,10 +185,12 @@ def create_reverse_handler(reverse_table=None):
     reverse_table = reverse_table or ReverseTable({v:k for k, v in default_args_method_table.items()})
     return ReverseHandler(reverse_table)
 
-def create_env(reverse_handler=None, query_methods=None):
+def create_env(reverse_handler=None, query_methods=None, action_factory=None):
     reverse_handler = reverse_handler or create_reverse_handler()
     query_methods = query_methods or default_query_methods+default_lazy_options
+    action_factory = action_factory or OnPlaceHolderActionFactory()
     return Env(
+        action_factory=action_factory,
         handler=reverse_handler, 
         query_methods=query_methods, 
     )

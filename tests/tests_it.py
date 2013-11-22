@@ -68,7 +68,7 @@ class IntegrationTests(unittest.TestCase):
                     {"query": [":User.id", ":Group.name", ":User.name"]},
                     {"filter": ["like", ":Group.name", "%Group%"]},
                     {"filter": ["<=", ":Group.id", 1]}, 
-                    {"join": ["quote", ":Group", ["==", ":User.group_id", ":Group.id"]]},
+                    {"join": ["quote", ":Group", ["=", ":User.group_id", ":Group.id"]]},
                     {"order_by": ["desc", ":User.name"]},
                 ]}
         result = target(data)

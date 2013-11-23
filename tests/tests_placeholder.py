@@ -44,6 +44,13 @@ class NameTests(unittest.TestCase):
         expected = q.filter(self.User.id==1).filter(self.User.name==1).render()
         self.assertEqual(result, expected)
 
+    def test_placeholder_in_list(self):
+        q = self.query_factory(self.User)
+        target = q.filter(self.User.id.in_([1, 2, 3, self._useOne("v")]))
+        result = target.render(v=44)
+        expected = q.filter(self.User.id.in_([1, 2, 3, 44])).render()
+        self.assertEqual(result, expected)
+
     def test_collect(self):
         q = self.query_factory(self.User)
         target = q.filter(self.User.id==self._useOne("v")).filter(self.User.name==self._useOne("v"))

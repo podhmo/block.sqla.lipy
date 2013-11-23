@@ -10,13 +10,13 @@ from block.sqla.lispy import (
     default_args_method_table,
 )
 from collections import namedtuple, defaultdict
-Env = namedtuple("Env", "handler query_methods action_factory")
+Env = namedtuple("Env", "handler query_methods context_factory")
 
 class InvalidQueryMethod(Exception):
     pass
 class HandleActionNotFound(Exception):
     pass
-class PlaceHolderNameConflict(Exception):
+class MatchedClauesNotFound(Exception):
     pass
 
 class Name(object):
@@ -26,25 +26,143 @@ class Name(object):
     def on_callback(self, action):
         return action(self)
 
-class OnPlaceHolderActionFactory(object):
-    def render(self, render_vals):
-        def callback(placeholder):
-            return render_vals[placeholder.name]
-        return callback
+def scan_data(context, data):
+    for k, v in data.items():
+        if hasattr(v, "__action__"):
+            context.climb_down(v.__action__, k)
+        elif hasattr(v, "keys"):
+            context.climb_down(scan_data, k, v)
+        else:
+            raise MatchedClauesNotFound(repr(k, v))
+    return context.finish()
 
-    def collect(self, collected, history):
-        def callback(placeholder):
-            collected[placeholder.name].append(".".join(str(e) for e in history))
-        return callback
+class RenderContext(object):
+    def __init__(self, render_vals, action=scan_data):
+        self.render_vals = render_vals
+        self.stack = [{}]
+        self.action = action
+
+    @property
+    def result(self):
+        return self.stack[-1]
+    @result.setter
+    def result(self, v):
+        self.stack[-1] = v
+
+    def emit(self, placeholder):
+        return self.render_vals[placeholder.name]
+
+    def subscan(self, handler, k, data):
+        return handler.handle(self, data)
+
+    def climb_down(self, fn, k, *args):
+        self.stack.append({})
+        result = fn(self, *args)
+        self.stack.pop()
+        self.result[k] = result
+
+    def finish(self):
+        return self.result
+
+class CollectContext(object):
+    def __init__(self, history, collected, action=scan_data):
+        self.history = history
+        self.collected = collected
+        self.action = action
+
+    def emit(self, placeholder):
+        self.collected[placeholder.name].append(".".join(str(e) for e in self.history))
+
+    def subscan(self, handler, k, data):
+        return self.climb_down(handler.handle, k, data)
+
+    def climb_down(self, fn, k, *args):
+        self.history.append(k)
+        v = fn(self, *args)
+        self.history.pop()
+        return v
+
+    def finish(self):
+        return self.collected
+
+class DefaultContextFactory(object):
+    render = RenderContext
+    collect = CollectContext
+
+class ReverseHandler(object):
+    def __init__(self, reverse_table):
+        self.reverse_table = reverse_table
+
+    def scan(self, context, k, e):
+        return context.subscan(self, k, e)
+
+    def handle(self, context, e): #todo: refactoring
+        if hasattr(e, "on_callback"):
+            return e.on_callback(context.emit) #hmm.
+        try:
+            m = inspect(e)
+            if hasattr(m, "key") and hasattr(m, "class_"): #User.id
+                return ":{}".format(str(m))
+            elif hasattr(m, "key") and hasattr(m, "value"): # User.id == 1 <- 
+                return self.handle(context, m.value)
+            elif hasattr(m, "name") and hasattr(m, "_annotations"): # -> User.id == 1
+                return ":{}.{}".format(m._annotations["parententity"].class_.__name__, m.name)
+            elif hasattr(m, "operator") and hasattr(m, "clauses"): # x & y,  x | y
+                op = self.reverse_table[m.operator]
+                args = [self.scan(context, str(i), x) for i, x in enumerate(m.clauses)]
+                args.insert(0, op)
+                return args
+            elif hasattr(m, "mapper"): #User
+                return ":{}".format(m.mapper.class_.__name__)
+            elif hasattr(m, "left") and hasattr(m, "right"): #User.id == 1
+                return [self.reverse_table[m.operator],
+                        self.scan(context, "1", m.left),
+                        self.scan(context, "2", m.right)
+                    ]
+            elif hasattr(m, "modifier") and hasattr(m, "element"): #sa.desc(User.id)
+                return [self.reverse_table[m.modifier], self.scan(context, "1", m.element)]
+            else:
+                raise HandleActionNotFound(e)
+        except NoInspectionAvailable:
+            return e #1, 2, 3?
+
+class ReverseQuery(object):
+    def __init__(self, env, data=None):
+        self.env = env
+        self.data = data or {} #tail
+
+    def __call__(self, *args):
+        new_data = self.data.copy()
+        new_data["query"] = QueryTarget(self.env, args)
+        return self.__class__(self.env, new_data)
+
+    def __getattr__(self, k):
+        if k in self.env.query_methods:
+            return ArgsMethod(self.env, QueryMethod(k, self.data.copy()))
+        raise InvalidQueryMethod(k)
+
+    def render(self, **kwargs):
+        generate_context = self.env.context_factory.render
+        context = generate_context(kwargs, action=scan_data)
+        return scan_data(context, self.data)
+
+    def collect(self):
+        generate_context = self.env.context_factory.collect
+        context = generate_context(history=[], collected=defaultdict(list), action=scan_data)
+        return scan_data(context, self.data)
+
+    def __action__(self, context):
+        return context.action(context, self.data)
 
 class QueryTarget(object):
     def __init__(self, env, args):
         self.env = env
         self.args = args
 
-    def __action__(self, context, callback=None):
+    def __action__(self, context):
         handle = self.env.handler.handle
-        return [handle(e, context.get("history",[]), callback=callback) for e in self.args]
+        targets = [handle(context, e) for e in self.args]
+        return targets
 
 class QueryMethod(object):
     def __init__(self, name, data, args=None):
@@ -71,119 +189,19 @@ class ArgsMethod(object):
         self.args = args #xxx
         return self.query_method.update(self)
 
-    def __action__(self, context, callback=None):
-        history = context.get("history",[])
-        result = self.env.handler.handle(self.args, history, callback=callback)
+    def __action__(self, context):
+        result = self.env.handler.handle(context, self.args)
         return result
-
-class ReverseHandler(object):
-    def __init__(self, reverse_table):
-        self.reverse_table = reverse_table
-
-    def handle(self, e, history, callback=None): #todo: refactoring
-        if hasattr(e, "on_callback"):
-            return e.on_callback(callback)
-        try:
-            m = inspect(e)
-            if hasattr(m, "key") and hasattr(m, "class_"): #User.id
-                return ":{}".format(str(m))
-            elif hasattr(m, "key") and hasattr(m, "value"): # User.id == 1 <- 
-                return self.handle(m.value, history, callback=callback)
-            elif hasattr(m, "name") and hasattr(m, "_annotations"): # -> User.id == 1
-                return ":{}.{}".format(m._annotations["parententity"].class_.__name__, m.name)
-            elif hasattr(m, "operator") and hasattr(m, "clauses"): # x && y
-                op = self.reverse_table[m.operator]
-                args = []
-                for i, x in enumerate(m.clauses):
-                    history.append(i+1)
-                    args.append(self.handle(x, history, callback=callback))
-                    history.pop()
-                args.insert(0, op)
-                return args
-            elif hasattr(m, "mapper"): #User
-                return ":{}".format(m.mapper.class_.__name__)
-            elif hasattr(m, "left") and hasattr(m, "right"): #User.id == 1
-                v = [self.reverse_table[m.operator]]
-                history.append(1)
-                v.append(self.handle(m.left, history, callback=callback))
-                history.pop()
-                history.append(2)
-                v.append(self.handle(m.right, history, callback=callback))
-                history.pop()
-                return v
-            elif hasattr(m, "modifier") and hasattr(m, "element"): #sa.desc(User.id)
-                op = self.reverse_table[m.modifier]
-                v = [op]
-                history.append(1)
-                v.append(self.handle(m.element, history, callback=callback))
-                history.pop()
-                return v
-            else:
-                raise HandleActionNotFound(e)
-        except NoInspectionAvailable:
-            return e #1, 2, 3?
-
-class ReverseQuery(object):
-    def __init__(self, env, data=None):
-        self.env = env
-        self.data = data or {} #tail
-
-    def __call__(self, *args):
-        new_data = self.data.copy()
-        new_data["query"] = QueryTarget(self.env, args)
-        return self.__class__(self.env, new_data)
-
-    def __getattr__(self, k):
-        if k in self.env.query_methods:
-            return ArgsMethod(self.env, QueryMethod(k, self.data.copy()))
-        raise InvalidQueryMethod(k)
-
-    def render(self, **kwargs):
-        callback = self.env.action_factory.render(kwargs)
-        context = {"action": render_data}
-        return render_data(self.data, context, callback=callback)
-
-    def collect(self):
-        context = {
-            "action": collect_data,
-            "history": [],
-            "collected": defaultdict(list)
-        }
-        callback = self.env.action_factory.collect(context["collected"], context["history"]) #hmm.
-        return collect_data(self.data, context, callback=callback)
-
-    def __action__(self, context, callback):
-        context["action"](self.data, context, callback=callback)
-
-
-def render_data(data, context, callback):
-    D = {}
-    for k, v in data.items():
-        if hasattr(v, "__action__"):
-            D[k] = v.__action__(context, callback=callback)
-        elif hasattr(v, "keys"):
-            D[k] = render_data(v, context, callback)
-        else:
-            D[k] = v
-    return D
-
-def collect_data(data, context, callback):
-    history = context["history"]
-    for k, v in data.items():
-        history.append(k)
-        if hasattr(v, "__action__"):
-            v.__action__(context, callback=callback)
-        elif hasattr(v, "keys"):
-            collect_data(v, context, callback)
-        history.pop()
-    return context["collected"]
 
 class ReverseTable(object):
     default = {
         "notlike_op": "notlike",
         "like_op": "like",
         "desc_op": "desc",
-        "asc_op": "asc"
+        "asc_op": "asc",
+        "in_op": "in",
+        "notin_op": "not_in",#xxx:
+        "comma_op": "quote",#xxx:
     }
     def __init__(self, table, default=None):
         self.table = table
@@ -200,12 +218,12 @@ def create_reverse_handler(reverse_table=None):
     reverse_table = reverse_table or ReverseTable({v:k for k, v in default_args_method_table.items()})
     return ReverseHandler(reverse_table)
 
-def create_env(reverse_handler=None, query_methods=None, action_factory=None):
+def create_env(reverse_handler=None, query_methods=None, context_factory=None):
     reverse_handler = reverse_handler or create_reverse_handler()
     query_methods = query_methods or default_query_methods+default_lazy_options
-    action_factory = action_factory or OnPlaceHolderActionFactory()
+    context_factory = context_factory or DefaultContextFactory
     return Env(
-        action_factory=action_factory,
+        context_factory=context_factory,
         handler=reverse_handler, 
         query_methods=query_methods, 
     )
